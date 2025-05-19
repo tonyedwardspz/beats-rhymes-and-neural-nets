@@ -1,0 +1,651 @@
+<!doctype html>
+<html lang="en-us">
+    <head>
+        <title>Beats by the chunk</title>
+
+        <style>
+            #output, #resultOutput {
+                width: 100%;
+                height: 100%;
+                margin: 0 auto;
+                padding-left: 10px;
+                padding-right: 10px;
+                display: inline-block;
+                background-color: black;
+                color: white;
+                font-size: 14px;
+                font-family: 'Lucida Console', Monaco, monospace;
+                outline: none;
+                white-space: pre;
+                overflow-wrap: normal;
+                overflow-x: scroll;
+            }
+
+            #resultOutput {
+                background-color: white;
+                color: black;
+            }
+
+            #result-container {
+                display: none;
+            }
+
+            #input, #action-container {
+                display: none;
+            }
+
+            #toggle {
+                padding: 10px 20px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-weight: bold;
+                transition: background-color 0.3s;
+            }
+
+            #toggle:not(.recording) {
+                background-color: #4CAF50;
+                color: white;
+            }
+
+            #toggle.recording {
+                background-color: #f44336;
+                color: white;
+            }
+
+            #toggle:disabled {
+                background-color: #cccccc;
+                cursor: not-allowed;
+            }
+        </style>
+
+        <link rel="stylesheet" href="../css/tacit-css-1.9.0.css" />
+        <script src="../coi-serviceworker.js"></script>
+        <link rel="icon" href="data:,">
+    </head>
+    <body>
+        <div id="main-container">
+
+            <nav>
+                <ul>
+                    <li><a href="/">One Shot</a></li>
+                    <li><a href="stream.wasm">Streaming</a></li>
+                </ul>
+            </nav>
+
+            <hr>
+
+            <div id="model">
+                Whisper models: <span id="model-whisper-status"></span><br><br>
+                <button id="fetch-whisper-tiny-en"  onclick="loadWhisper('tiny.en')">tiny.en (75 MB)</button>
+                <button id="fetch-whisper-tiny"     onclick="loadWhisper('tiny')">tiny (75 MB)</button>
+                <button id="fetch-whisper-base-en"  onclick="loadWhisper('base.en')">base.en (142 MB)</button>
+                <button id="fetch-whisper-base"     onclick="loadWhisper('base')">base (142 MB)</button>
+                <br><br>
+                Quantized models:<br><br>
+                <button id="fetch-whisper-tiny-en-q5_1"   onclick="loadWhisper('tiny-en-q5_1')">tiny.en (Q5_1, 31 MB)</button>
+                <button id="fetch-whisper-tiny-q5_1"      onclick="loadWhisper('tiny-q5_1')">tiny (Q5_1, 31 MB)</button>
+                <button id="fetch-whisper-base-en-q5_1"   onclick="loadWhisper('base-en-q5_1')">base.en (Q5_1, 57 MB)</button>
+                <button id="fetch-whisper-base-q5_1"      onclick="loadWhisper('base-q5_1')">base (Q5_1, 57 MB)</button>
+                <button id="fetch-whisper-small-en-q5_1"  onclick="loadWhisper('small-en-q5_1')">small.en (Q5_1, 182 MB)</button>
+                <button id="fetch-whisper-small-q5_1"     onclick="loadWhisper('small-q5_1')">small (Q5_1, 182 MB)</button>
+                <span id="fetch-whisper-progress"></span>
+
+                <br>
+            </div>
+
+            
+
+            <div id="input" >
+                Input:
+                <label for="mic"><input type="radio" id="mic" name="input" value="mic" checked="checked" onchange="changeInput('mic')" /> Microphone</label>
+                <label for="file"><input type="radio" id="file" name="input" value="file" onchange="changeInput('file')" /> File</label>
+            
+                <br>
+
+                <div id="input_file" style="display: none;">
+                    <input type="file" id="file" name="file" onchange="loadAudio(event)" />
+                </div>
+    
+                <div id="input_mic" >
+                    <button id="toggle" onclick="onToggle()">Start</button>
+    
+                    <br>
+                    <div id="progress">
+                        <div id="progress-bar" style="width: 0%; height: 10px; background-color: #4CAF50;"></div>
+                        <div id="progress-text">0%</div>
+                    </div>
+                </div>
+
+
+                <audio controls="controls" id="audio" loop hidden>
+                    Your browser does not support the &lt;audio&gt; tag.
+                    <source id="source" src="" type="audio/wav" />
+                </audio>
+    
+            
+            </div>
+            
+            <div id="action-container">
+                <table>
+                    <tr>
+                        <td>
+                            Language:
+                            <select id="language" name="language">
+                            </select>
+                        </td>
+    
+                        <td>
+                            <button onclick="onProcess(false);">Transcribe</button>
+                        </td>
+                        <td>
+                            <button onclick="onProcess(true);">Translate</button>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            
+        
+            <div id="result-container">
+                <textarea id="resultOutput" rows="20"></textarea>
+
+                <textarea id="output" rows="20"></textarea>
+            </div>
+
+            
+
+        </div>
+
+        <script type="text/javascript" src="helpers.js"></script>
+        <script type='text/javascript'>
+            // TODO: convert audio buffer to WAV
+            function setAudio(audio) {
+
+            }
+
+            function changeInput(input) {
+                if (input == 'file') {
+                    document.getElementById('input_file').style.display = 'block';
+                    document.getElementById('input_mic' ).style.display = 'none';
+                    document.getElementById('progress'  ).style.display = 'none';
+                } else {
+                    document.getElementById('input_file').style.display = 'none';
+                    document.getElementById('input_mic' ).style.display = 'block';
+                    document.getElementById('progress'  ).style.display = 'block';
+                }
+            }
+
+            var Module = {
+                print: printTextarea,
+                printErr: printTextarea,
+                setStatus: function(text) {
+                    printTextarea('js: ' + text);
+                },
+                monitorRunDependencies: function(left) {
+                }
+            };
+
+            // web audio context
+            var context = null;
+
+            // audio data
+            var audio = null;
+
+            // the whisper instance
+            var instance = null;
+            var model_whisper = '';
+
+            // helper function
+            function convertTypedArray(src, type) {
+                var buffer = new ArrayBuffer(src.byteLength);
+                var baseView = new src.constructor(buffer).set(src);
+                return new type(buffer);
+            }
+
+            //
+            // load model
+            //
+
+            let dbVersion = 1
+            let dbName    = 'whisper.ggerganov.com';
+            let indexedDB = window.indexedDB || window.mozIndexedDB || window.webkitIndexedDB || window.msIndexedDB
+
+            function storeFS(fname, buf) {
+                // write to WASM file using FS_createDataFile
+                // if the file exists, delete it
+                try {
+                    Module.FS_unlink(fname);
+                } catch (e) {
+                    // ignore
+                }
+
+                Module.FS_createDataFile("/", fname, buf, true, true);
+
+                //model_whisper = fname;
+
+                document.getElementById('model-whisper-status').innerHTML = 'Using "' + model_whisper + '"!';
+
+                printTextarea('storeFS: stored model: ' + fname + ' size: ' + buf.length);
+
+                document.getElementById('model').innerHTML = 'Model fetched: ' + model_whisper;
+
+                // Show input and action container after model is loaded
+                document.getElementById('input').style.display = 'block';
+                document.getElementById('action-container').style.display = 'block';
+            }
+
+            function loadFile(event, fname) {
+                var file = event.target.files[0] || null;
+                if (file == null) {
+                    return;
+                }
+
+                printTextarea("loadFile: loading model: " + file.name + ", size: " + file.size + " bytes");
+                printTextarea('loadFile: please wait ...');
+
+                var reader = new FileReader();
+                reader.onload = function(event) {
+                    var buf = new Uint8Array(reader.result);
+                    storeFS(fname, buf);
+                }
+                reader.readAsArrayBuffer(file);
+
+                document.getElementById('fetch-whisper-tiny'    ).style.display = 'none';
+                document.getElementById('fetch-whisper-base'    ).style.display = 'none';
+
+                document.getElementById('fetch-whisper-tiny-en-q5_1'  ).style.display = 'none';
+                document.getElementById('fetch-whisper-tiny-q5_1'     ).style.display = 'none';
+                document.getElementById('fetch-whisper-base-en-q5_1'  ).style.display = 'none';
+                document.getElementById('fetch-whisper-base-q5_1'     ).style.display = 'none';
+                document.getElementById('fetch-whisper-small-en-q5_1' ).style.display = 'none';
+                document.getElementById('fetch-whisper-small-q5_1'    ).style.display = 'none';
+
+
+                document.getElementById('model-whisper-status'  ).innerHTML = 'loaded model: ' + file.name;
+            }
+
+            function loadWhisper(model) {
+                let urls = {
+                    'tiny':     'https://whisper.ggerganov.com/ggml-model-whisper-tiny.bin',
+                    'base':     'https://whisper.ggerganov.com/ggml-model-whisper-base.bin',
+
+                    'tiny-en-q5_1':  'https://whisper.ggerganov.com/ggml-model-whisper-tiny.en-q5_1.bin',
+                    'tiny-q5_1':     'https://whisper.ggerganov.com/ggml-model-whisper-tiny-q5_1.bin',
+                    'base-en-q5_1':  'https://whisper.ggerganov.com/ggml-model-whisper-base.en-q5_1.bin',
+                    'base-q5_1':     'https://whisper.ggerganov.com/ggml-model-whisper-base-q5_1.bin',
+                    'small-en-q5_1': 'https://whisper.ggerganov.com/ggml-model-whisper-small.en-q5_1.bin',
+                    'small-q5_1':    'https://whisper.ggerganov.com/ggml-model-whisper-small-q5_1.bin'
+                };
+
+                let sizes = {
+                    'tiny':     75,
+                    'base':     142,
+
+                    'tiny-en-q5_1':   31,
+                    'tiny-q5_1':      31,
+                    'base-en-q5_1':   57,
+                    'base-q5_1':      57,
+                    'small-en-q5_1':  182,
+                    'small-q5_1':     182
+                };
+
+                let url     = urls[model];
+                let dst     = 'whisper.bin';
+                let size_mb = sizes[model];
+
+                model_whisper = model;
+
+                document.getElementById('fetch-whisper-tiny'    ).style.display = 'none';
+                document.getElementById('fetch-whisper-base'    ).style.display = 'none';
+
+                document.getElementById('fetch-whisper-tiny-en-q5_1'  ).style.display = 'none';
+                document.getElementById('fetch-whisper-tiny-q5_1'     ).style.display = 'none';
+                document.getElementById('fetch-whisper-base-en-q5_1'  ).style.display = 'none';
+                document.getElementById('fetch-whisper-base-q5_1'     ).style.display = 'none';
+                document.getElementById('fetch-whisper-small-en-q5_1' ).style.display = 'none';
+                document.getElementById('fetch-whisper-small-q5_1'    ).style.display = 'none';
+
+                document.getElementById('model-whisper-status').innerHTML = 'loading model: ' + model;
+
+                cbProgress = function(p) {
+                    let el = document.getElementById('fetch-whisper-progress');
+                    el.innerHTML = Math.round(100*p) + '%';
+                };
+
+                cbCancel = function() {
+                    var el;
+
+                    el = document.getElementById('fetch-whisper-tiny'    ); if (el) el.style.display = 'inline-block';
+                    el = document.getElementById('fetch-whisper-base'    ); if (el) el.style.display = 'inline-block';
+
+                    el = document.getElementById('fetch-whisper-tiny-en-q5_1'  ); if (el) el.style.display = 'inline-block';
+                    el = document.getElementById('fetch-whisper-tiny-q5_1'     ); if (el) el.style.display = 'inline-block';
+                    el = document.getElementById('fetch-whisper-base-en-q5_1'  ); if (el) el.style.display = 'inline-block';
+                    el = document.getElementById('fetch-whisper-base-q5_1'     ); if (el) el.style.display = 'inline-block';
+                    el = document.getElementById('fetch-whisper-small-en-q5_1' ); if (el) el.style.display = 'inline-block';
+                    el = document.getElementById('fetch-whisper-small-q5_1'    ); if (el) el.style.display = 'inline-block';
+
+                    el = document.getElementById('model-whisper-status'); if (el) el.innerHTML = '';
+                };
+
+                loadRemote(url, dst, size_mb, cbProgress, function(fname, buf) {
+                    storeFS(fname, buf);
+                    document.getElementById('model').style.display = 'none';
+                }, cbCancel, printTextarea);
+            }
+
+            //
+            // audio file
+            //
+
+            const kMaxAudio_s = 30*60;
+            const kMaxRecording_s = 2*60;
+            const kSampleRate = 16000;
+
+            window.AudioContext = window.AudioContext || window.webkitAudioContext;
+            window.OfflineAudioContext = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+
+            function loadAudio(event) {
+                if (!context) {
+                    context = new AudioContext({
+                        sampleRate: kSampleRate,
+                        channelCount: 1,
+                        echoCancellation: false,
+                        autoGainControl:  true,
+                        noiseSuppression: true,
+                    });
+                }
+
+                var file = event.target.files[0] || null;
+                if (file == null) {
+                    return;
+                }
+
+                printTextarea('js: loading audio: ' + file.name + ', size: ' + file.size + ' bytes');
+                printTextarea('js: please wait ...');
+
+                var reader = new FileReader();
+                reader.onload = function(event) {
+                    var buf = new Uint8Array(reader.result);
+
+                    context.decodeAudioData(buf.buffer, function(audioBuffer) {
+                        var offlineContext = new OfflineAudioContext(audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate);
+                        var source = offlineContext.createBufferSource();
+                        source.buffer = audioBuffer;
+                        source.connect(offlineContext.destination);
+                        source.start(0);
+
+                        offlineContext.startRendering().then(function(renderedBuffer) {
+                            audio = renderedBuffer.getChannelData(0);
+                            printTextarea('js: audio loaded, size: ' + audio.length);
+
+                            // truncate to first 30 seconds
+                            if (audio.length > kMaxAudio_s*kSampleRate) {
+                                audio = audio.slice(0, kMaxAudio_s*kSampleRate);
+                                printTextarea('js: truncated audio to first ' + kMaxAudio_s + ' seconds');
+                            }
+
+                            setAudio(audio);
+                        });
+                    }, function(e) {
+                        printTextarea('js: error decoding audio: ' + e);
+                        audio = null;
+                        setAudio(audio);
+                    });
+                }
+                reader.readAsArrayBuffer(file);
+            }
+
+            //
+            // microphone
+            //
+
+            var mediaRecorder = null;
+            var doRecording = false;
+            var startTime = 0;
+            var isRecording = false;
+
+            function onToggle() {
+                if (!isRecording) {
+                    startRecording();
+                    document.getElementById('toggle').textContent = 'Stop';
+                    document.getElementById('toggle').classList.add('recording');
+                    isRecording = true;
+                } else {
+                    stopRecording();
+                    document.getElementById('toggle').textContent = 'Start';
+                    document.getElementById('toggle').classList.remove('recording');
+                    isRecording = false;
+                }
+            }
+
+            function stopRecording() {
+                doRecording = false;
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
+            }
+
+            // record up to kMaxRecording_s seconds of audio from the microphone
+            // check if doRecording is false every 1000 ms and stop recording if so
+            // update progress information
+            function startRecording() {
+                if (!context) {
+                    context = new AudioContext({
+                        sampleRate: kSampleRate,
+                        channelCount: 1,
+                        echoCancellation: false,
+                        autoGainControl:  true,
+                        noiseSuppression: true,
+                    });
+                }
+
+                document.getElementById('progress-bar').style.width = '0%';
+                document.getElementById('progress-text').innerHTML = '0%';
+
+                doRecording = true;
+                startTime = Date.now();
+
+                var chunks = [];
+                var stream = null;
+
+                navigator.mediaDevices.getUserMedia({audio: true, video: false})
+                    .then(function(s) {
+                        stream = s;
+                        mediaRecorder = new MediaRecorder(stream);
+                        mediaRecorder.ondataavailable = function(e) {
+                            chunks.push(e.data);
+                        };
+                        mediaRecorder.onstop = function(e) {
+                            var blob = new Blob(chunks, { 'type' : 'audio/ogg; codecs=opus' });
+                            chunks = [];
+
+                            var reader = new FileReader();
+                            reader.onload = function(event) {
+                                var buf = new Uint8Array(reader.result);
+
+                                context.decodeAudioData(buf.buffer, function(audioBuffer) {
+                                    var offlineContext = new OfflineAudioContext(audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate);
+                                    var source = offlineContext.createBufferSource();
+                                    source.buffer = audioBuffer;
+                                    source.connect(offlineContext.destination);
+                                    source.start(0);
+
+                                    offlineContext.startRendering().then(function(renderedBuffer) {
+                                        audio = renderedBuffer.getChannelData(0);
+                                        printTextarea('js: audio recorded, size: ' + audio.length);
+
+                                        // truncate to first 30 seconds
+                                        if (audio.length > kMaxRecording_s*kSampleRate) {
+                                            audio = audio.slice(0, kMaxRecording_s*kSampleRate);
+                                            printTextarea('js: truncated audio to first ' + kMaxRecording_s + ' seconds');
+                                        }
+                                        setAudio(audio);
+                                    });
+                                }, function(e) {
+                                    printTextarea('js: error decoding audio: ' + e);
+                                    audio = null;
+                                    setAudio(audio);
+                                });
+                            }
+
+                            reader.readAsArrayBuffer(blob);
+                        };
+                        mediaRecorder.start();
+                    })
+                    .catch(function(err) {
+                        printTextarea('js: error getting audio stream: ' + err);
+                        stopRecording();
+                    });
+
+                var interval = setInterval(function() {
+                    if (!doRecording) {
+                        clearInterval(interval);
+                        mediaRecorder.stop();
+                        stream.getTracks().forEach(function(track) {
+                            track.stop();
+                        });
+                    }
+
+                    document.getElementById('progress-bar').style.width = (100*(Date.now() - startTime)/1000/kMaxRecording_s) + '%';
+                    document.getElementById('progress-text').innerHTML = (100*(Date.now() - startTime)/1000/kMaxRecording_s).toFixed(0) + '%';
+                }, 1000);
+
+                printTextarea('js: recording ...');
+
+                setTimeout(function() {
+                    if (doRecording) {
+                        printTextarea('js: recording stopped after ' + kMaxRecording_s + ' seconds');
+                        stopRecording();
+                    }
+                }, kMaxRecording_s*1000);
+            }
+
+            //
+            // transcribe
+            //
+
+            var nthreads = 8;
+
+
+
+            function onProcess(translate) {
+                if (!instance) {
+                    instance = Module.init('whisper.bin');
+
+                    if (instance) {
+                        printTextarea("js: whisper initialized, instance: " + instance);
+                        document.getElementById('model').innerHTML = 'Model loaded: ' + model_whisper;
+                    }
+                }
+
+                if (!instance) {
+                    printTextarea("js: failed to initialize whisper");
+                    return;
+                }
+
+                if (!audio) {
+                    printTextarea("js: no audio data");
+                    return;
+                }
+
+                // Show the result container
+                document.getElementById('result-container').style.display = 'block';
+
+                if (instance) {
+                    printTextarea('');
+                    printTextarea('js: processing - this might take a while ...');
+                    printTextarea('');
+
+                    setTimeout(function() {
+                        var ret = Module.full_default(instance, audio, document.getElementById('language').value, nthreads, translate);
+                        console.log('js: full_default returned: ' + ret);
+                        if (ret) {
+                            printTextarea("js: whisper returned: " + ret);
+                        }
+                    }, 100);
+                }
+            }
+
+            const languages = [
+                { code: 'en', name: 'English' },
+                { code: 'ar', name: 'Arabic' },
+                { code: 'hy', name: 'Armenian' },
+                { code: 'az', name: 'Azerbaijani' },
+                { code: 'eu', name: 'Basque' },
+                { code: 'be', name: 'Belarusian' },
+                { code: 'bn', name: 'Bengali' },
+                { code: 'bg', name: 'Bulgarian' },
+                { code: 'ca', name: 'Catalan' },
+                { code: 'zh', name: 'Chinese' },
+                { code: 'hr', name: 'Croatian' },
+                { code: 'cs', name: 'Czech' },
+                { code: 'da', name: 'Danish' },
+                { code: 'nl', name: 'Dutch' },
+                { code: 'et', name: 'Estonian' },
+                { code: 'tl', name: 'Filipino' },
+                { code: 'fi', name: 'Finnish' },
+                { code: 'fr', name: 'French' },
+                { code: 'gl', name: 'Galician' },
+                { code: 'ka', name: 'Georgian' },
+                { code: 'de', name: 'German' },
+                { code: 'el', name: 'Greek' },
+                { code: 'gu', name: 'Gujarati' },
+                { code: 'iw', name: 'Hebrew' },
+                { code: 'hi', name: 'Hindi' },
+                { code: 'hu', name: 'Hungarian' },
+                { code: 'is', name: 'Icelandic' },
+                { code: 'id', name: 'Indonesian' },
+                { code: 'ga', name: 'Irish' },
+                { code: 'it', name: 'Italian' },
+                { code: 'ja', name: 'Japanese' },
+                { code: 'kn', name: 'Kannada' },
+                { code: 'ko', name: 'Korean' },
+                { code: 'la', name: 'Latin' },
+                { code: 'lv', name: 'Latvian' },
+                { code: 'lt', name: 'Lithuanian' },
+                { code: 'mk', name: 'Macedonian' },
+                { code: 'ms', name: 'Malay' },
+                { code: 'mt', name: 'Maltese' },
+                { code: 'no', name: 'Norwegian' },
+                { code: 'fa', name: 'Persian' },
+                { code: 'pl', name: 'Polish' },
+                { code: 'pt', name: 'Portuguese' },
+                { code: 'ro', name: 'Romanian' },
+                { code: 'ru', name: 'Russian' },
+                { code: 'sr', name: 'Serbian' },
+                { code: 'sk', name: 'Slovak' },
+                { code: 'sl', name: 'Slovenian' },
+                { code: 'es', name: 'Spanish' },
+                { code: 'sw', name: 'Swahili' },
+                { code: 'sv', name: 'Swedish' },
+                { code: 'ta', name: 'Tamil' },
+                { code: 'te', name: 'Telugu' },
+                { code: 'th', name: 'Thai' },
+                { code: 'tr', name: 'Turkish' },
+                { code: 'uk', name: 'Ukrainian' },
+                { code: 'ur', name: 'Urdu' },
+                { code: 'vi', name: 'Vietnamese' },
+                { code: 'cy', name: 'Welsh' },
+                { code: 'yi', name: 'Yiddish' }
+            ];
+
+            // Function to populate the language select box
+            function populateLanguageSelect() {
+                const select = document.getElementById('language');
+                languages.forEach(lang => {
+                    const option = document.createElement('option');
+                    option.value = lang.code;
+                    option.textContent = lang.name;
+                    select.appendChild(option);
+                });
+            }
+
+            // Call the function when the page loads
+            document.addEventListener('DOMContentLoaded', populateLanguageSelect);
+
+        </script>
+        <script type="text/javascript" src="main.js"></script>
+    </body>
+</html>
